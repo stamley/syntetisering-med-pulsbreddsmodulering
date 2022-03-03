@@ -437,35 +437,26 @@ void time4synth( void ){
                             /* -- SW2 - Arpeggiator mode -- */
 
   if(getswitches & 0x02){
-    // Multiple for changing octaves 
-    double m = 1;
     // Här används PR3 som hastighet för arpeggiatorn
     // Potentiometern kontrollerar hastigheten av arpeggiatorn
     // genom att ändra perioden (PR3) istället för pitchen
 
-    // PR3, i.e Timer 3 is instead 
-    
+    PR3 = ADC1BUF0 * 6.4; 
 
-    if(getswitches & 0x01){
-      PR3 = ADC1BUF0 * 6.4; 
-      m = 1;
-    }
-    else{ m = ADC1BUF0/1023 + 0.01;}
-    
 
-    // BTN4 - 
+    // BTN4
     if(getbutton & 0x04){
       arpchord(659/2, 440/2, 370/2, "Fae");
       // F#m7 - E, A, F#
     }
 
-    //BTN3 - 
+    //BTN3 
     else if(getbutton & 0x02){
       arpchord(1760/2, 1109/2, 880/2, "aCa");
       // A - A, C#, A
     }
 
-    //BTN2 -
+    //BTN2
     else if(getbutton & 0x01){
       arpchord(1480/2, 988/2, 784/2, "CeF");
       // Gmaj7 - F#, B, G
