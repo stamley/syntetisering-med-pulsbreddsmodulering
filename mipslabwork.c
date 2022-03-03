@@ -148,18 +148,16 @@ float sines[] = {0.500000, 0.504000, 0.507999, 0.511998, 0.515996, 0.519992,
   0.446883, 0.450850, 0.454822, 0.458799, 0.462780, 0.466764, 0.470752, 
   0.474743, 0.478736, 0.482731, 0.486728, 0.490727, 0.494726};
 
-double DUTYCYCLE = 0.1; // 10%
+// Dutycycle ratio-variable first as 10%
+double DUTYCYCLE = 0.1; 
 
+// 10^-9 
 float e9 = 0.000000001; 
 
-
-short arpdelay = 0;
 
 short frequency;
 char frequencychar[6] = "    Hz";
 char wavetype[2];
-
-char note[] = "CDEFGAB";
 
 char chosennote[2] = "A#";
 
@@ -194,7 +192,6 @@ void tmrinit( void ){
 
   // 3. Setting bits 4-6 to 000 - 111 depending on wished pre-scale
   T3CONSET = 0x0070;  // 1:256
-                      // 80 MHz / 256 = 312 500 c/s
 
   // Clear timer register
   TMR3 = 0x0; 
@@ -213,8 +210,8 @@ void tmrinit( void ){
 
 
   // Start the timers
-  T2CONSET = 0x8000; 
-  T3CONSET = 0x8000; 
+  T2CONSET = 0x8000;
+  T3CONSET = 0x8000;
 }
 
 void ocinit ( void ){
@@ -234,7 +231,7 @@ void ocinit ( void ){
 
 void adcinit ( void ){
   AD1PCFGCLR = (1 << 2); // AN2 som egentligen är A0
-  AD1CSSLCLR = 0xFF; // Clearar för säkerhets skull
+  AD1CSSLCLR = 0xFF;     // Clearar för säkerhets skull
   AD1CSSLSET = (1 << 2); // Sätter AN2(A0) till analog
 
   AD1CON2SET = 1 << 2 | 1 << 10; // Kollar analog signal på en kanal (A0)
@@ -286,9 +283,15 @@ void sharp ( short note , char notes[]){
   chosennote[0] = notes[note];
   if(notes[note] < 0x61) // 'a'
     chosennote[1] = '#';
+  else{
+    // Make character uppercase
+    chosennote[0] -= 32;
+  }
 } 
 
 void arpchord( float first,  float second, float third, char notes[]){
+  static short arpdelay;
+  
   if(IFS(0) & 0x1000){
     IFSCLR(0) = 0x1000;
     arpdelay++;
@@ -310,6 +313,7 @@ void arpchord( float first,  float second, float third, char notes[]){
     sharp(2, notes);
   }
 
+  // Restart
   if(arpdelay >= 30)
     arpdelay = 0;
 }
@@ -321,44 +325,41 @@ void triangleLFO ( void ){
   static short triangleLFO;
   static int direction;
 
-  wavetype[0] = 0x2f;
-  wavetype[1] = 0x5c;
+  wavetype[0] = 0x2f; // '/'
+  wavetype[1] = 0x5c;//  '\'
 
-  
+  // Interrupt flag for timer 3
   if(IFS(0) & 0x1000){
     IFSCLR(0) = 0x1000;
     triangleLFO++;
   }
 
+  // 3 to sync the speeds of the LFOs
   if(triangleLFO == 3){
     if(direction){ 
     // Positive direction  
       if(DUTYCYCLE < 0.9) 
       // As long as The dutycycle is less than 90% we increase
+      // Calculated increase amount
         DUTYCYCLE += 0.00254;
-      else{
-        direction = 0;
-      }
+      else{ direction = 0; }
     }
     else{
       // Negative direction
       if(DUTYCYCLE > 0.1)
       // As long as the dutycycle is bigger than 10% we decrease
         DUTYCYCLE -= 0.00254;
-      else{
-        direction = 1;
-      }
+      else{ direction = 1; }
     }
     triangleLFO = 0;
   }
 }
 
-
 // LFO with sine shape
 void sineLFO ( void ){
   static short sineLFO;
 
-  wavetype[0] = '~';
+  wavetype[0] = '~'; // Sine wave
   wavetype[1] = '~';
 
   // Interrupt flag for timer 3
@@ -367,9 +368,8 @@ void sineLFO ( void ){
     sineLFO++;
   }
 
-  if(sineLFO >= 631){
+  if(sineLFO >= 628)
     sineLFO = 0;
-  }
 
   DUTYCYCLE = sines[sineLFO];
 }
@@ -385,7 +385,8 @@ void time4synth( void ){
   static short LFOType = 1;
 
   // Clear PORTEs first bit, and copy bit from PORTD onto this.
-  PORTE = (PORTE & 0xf00) | (PORTD & 0x01) * 255;
+  // PORTE = (PORTE & 0xf00) | (PORTD & 0x01) * 255;
+  PORTE = (PORTE & 0xf00) | ADC1BUF0/4;
 
   // Always change dutycycle when time4synth is called
   // Dutycycle is not varied in default synth mode
@@ -395,30 +396,24 @@ void time4synth( void ){
 
   // OC1RS = Register for changing dutycycle (i.e dutycycle)
   OC1RS = PR2 * DUTYCYCLE;
-  
-  
 
-  // Change the period, i.e frequency, i.e pitch
-  // PR2 maximum capacity is 65 535
-  // ADC1BUF0 maximum capacity is 1023
-  // PR2 can be incremented in steps of 64 (65 535/1023 ~= 64)
-
-
-  // SW4 - Default synth mode
+                          /* -- SW4 - Default synth mode -- */
   if(getswitches & 0x08){
-    PR2 = ADC1BUF0 * 64; // Pitchändring
+    PR2 = ADC1BUF0 * 64; // Pitchchange
     DUTYCYCLE = 0.50; // 50%
   }
 
-  // SW3 - LFO mode
+                              /* -- SW3 - LFO mode -- */
   if(getswitches & 0x04){
     chosennote[0] = ' ';
     chosennote[1] = ' ';
 
-    // Pitchändring
+    // Pitchchange
     PR2 = ADC1BUF0 * 64; 
+
     // Triangle dutycycle LFO - BTN 4
     newbutton = (getbutton >> 2) & 0x01;
+
     // Toggles the button
     if(oldButton == 0 && newbutton == 1){
       if(LFOType == 1){
@@ -429,6 +424,7 @@ void time4synth( void ){
       }
     }
 
+    // If you press the button, it will alternate LFOs
     if(LFOType){
       triangleLFO();
     }
@@ -459,43 +455,33 @@ void time4synth( void ){
 
     // BTN4 - 
     if(getbutton & 0x04){
-      arpchord(m*659/2, m*440/2, m*370/2, "Fae");
+      arpchord(659/2, 440/2, 370/2, "Fae");
       // F#m7 - E, A, F#
     }
 
     //BTN3 - 
     else if(getbutton & 0x02){
-      arpchord(m*880, m*1109/2, m*880/2, "aCa");
+      arpchord(1760/2, 1109/2, 880/2, "aCa");
       // A - A, C#, A
     }
 
     //BTN2 -
     else if(getbutton & 0x01){
-      arpchord(m*1480/2, m*988/2, m*784/2, "CeF");
+      arpchord(1480/2, 988/2, 784/2, "CeF");
       // Gmaj7 - F#, B, G
     }
 
     // Default chord
     else{
-      arpchord(m*587/2, m*392/2, m*329/2, "egd");
+      arpchord(587/2, 392/2, 329/2, "egd");
       // Em7 - D, G, E
     }
-
-
   }
-
-  /*if(getswitches & 0x01){
-    DUTYCYCLE = 0.1;
-  }*/
 }
 
 void labwork( void ) {
   frequency = freqcalc();
 
-  // 262
-  // 262 / 100 = 2
-  // (262%100) / 10 = 6
-  // (262%10) = 2
   if(frequency < 1000){
     frequencychar[0] = frequency / 100 + '0';
     frequencychar[1] = (frequency % 100) / 10 + '0';
@@ -520,71 +506,9 @@ void labwork( void ) {
   display_string( 2, chosennote );
   display_string( 3, frequencychar );
 
-  // Tilde - 0x7f ~
-  // Vänster \ - 0x5c
-  // höger / - 0x2f 
-
   time4synth();
-  
 }
-
-
-
-void thenewOGsoundofkista( void ){
-  if(PR2<10000){
-    PR2++;
-  }
-  else{
-    PR2 = 6000;
-  }
-}
-
-
-
 
 void user_isr( void ){
   return;
 }
-
-
-
-
-//grejvyard
-
-// short notefreq[] = {262, 294, 330, 349, 392, 440, 494};
-
-
-/*if(arpdelay == 100){
-    if(notechoice == 3)
-      notechoice = 0;
-
-    if(notechoice == 0)
-      periodcalc(first);
-    
-    if(notechoice == 1)
-      periodcalc(second);
-    
-    if(notechoice == 2)
-      periodcalc(third);
-    
-    notechoice++;
-
-    arpdelay = 0;*/
-
-
-  // BTN4
-  /*if(getbutton & 0x04){
-    periodcalc(440); // 440 = A
-    *note = 0x41;
-  }
-  // Pressing BTN3 changes the second digit of mytime with values of switches
-  if(getbutton & 0x02){
-    periodcalc(523); // 523.251 = C
-    *note = 0x43; 
-  }
-
-  // Pressing BTN2 changes the second digit of mytime with values of switches
-  if(getbutton & 0x01){
-    periodcalc(587); // 587.33 = D
-    *note = 0x44;
-  }*/
