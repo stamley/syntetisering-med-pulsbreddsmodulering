@@ -5,17 +5,57 @@
    This file written 2015 by F Lundevall
    Updated 2017-04-21 by F Lundevall
 
-   This file should be changed by YOU! So you must
-   add comment(s) here with your name(s) and date(s):
+   Björn Formgren
+   Axel Lystam
 
-   This file modified 2017-04-31 by Ture Teknolog 
+   This file was modified 2017-04-31 by Ture Teknolog 
+   This file was modified 2022-03-3 by Axel Lystam and Björn Formgren
 
    For copyright and licensing, see file COPYING */
+
+/* 
+
+
+                            -- Dictionary and explanations -- 
+
+LFO - Low Frequency Oscillation
+
+    Period calculation example:
+      Clockcycles/second with 1:8 prescale:
+      10 000 000 = 10 MHz
+      period = PR2 * N * 12.5 ns = 10000 * 4 * 12.5 * 10^-9
+      (12.5 ns is the duration of one clockcycle)
+      0.001 = 10^-3 = 1 ms = 1000 µs
+      f = 1/1000 µs = 1 kHz
+
+    PR2 - Register for timer 2 period (Pitch)
+      * By changing the period time we will vary the frequency
+      of which the output compare module (OC1) shifts between high and low. 
+      This will result a change of pitch. OC1 is linked to timer 2.
+
+    PR3 - Register for timer 3 period (Period for LFO)
+     * PR3 is the period register for the LFO.
+       Changing the timer 3 period will vary the frequency of the 
+       LFO.
+
+    ADC1BUF0 - Usage and explanation
+      Initialized to the potentiometer on the I/O shield. The buffer register
+      can at most contain a value between 0-1023 (2^10). This register contains a 
+      digital translation of an analog value, which in our case is controlled by the 
+      potentiometer. The period register can at most contain values between 
+      0-65535 (2^16). If we want to control the pitch by varying the PR2 register
+      we can use the potentiometer but we can only increment a certain number of 
+      steps. If the period register is incremented to a value larger than 65535 the 
+      period will "restart" and result in a high pitch again. If we divide 65535
+      with 1023 we get 64 which corresponds to the size of every step.
+
+
+*/
+
 
 #include <stdint.h>   /* Declarations of uint_32 and the like */
 #include <pic32mx.h>  /* Declarations of system-specific addresses etc */
 #include "mipslab.h"  /* Declatations for these labs */
-// #include "sineapproxes.c"
 
 float sines[] = {0.500000, 0.504000, 0.507999, 0.511998, 0.515996, 0.519992, 
   0.523986, 0.527977, 0.531966, 0.535951, 0.539933, 0.543911, 0.547885, 
@@ -109,38 +149,24 @@ float sines[] = {0.500000, 0.504000, 0.507999, 0.511998, 0.515996, 0.519992,
   0.474743, 0.478736, 0.482731, 0.486728, 0.490727, 0.494726};
 
 double DUTYCYCLE = 0.1; // 10%
-int direction = 1; // Positive direction for LFO first
 
 float e9 = 0.000000001; 
 
-int LFOcounter = 0;
-int arpdelay = 0;
 
-char debugN[1];
+short arpdelay = 0;
 
-int frequency;
-char frequencychar[3];
+short frequency;
+char frequencychar[6] = "    Hz";
+char wavetype[2];
 
-/*short notefreq[] = {262, 294, 330, 349, 392, 440, 494};
-char note[] = "CDEFGAB";*/
+char note[] = "CDEFGAB";
 
-// char note[] = "aAbcCdDefFgG"; 
-   char note[] = "DefFgGaAbcCd";
+char chosennote[2] = "A#";
 
-// short a4 = 440;
-   short D0 = 156; 
-double twelthroot2 = 1.059463094359;
-
-char chosennote[] = "A";
-
-/* Interrupt Service Routine */
-void user_isr( void ){
-  return;
-}
 
 void tmrinit( void ){
-  // Initialize timer 2 for timeouts every 100 ms (10 timeouts per second)
-  
+  /* -- First timer initialization -- */
+
   // 1. Clearing the ON control bit to disable the timer
   T2CONCLR = 0x8000;
 
@@ -149,21 +175,13 @@ void tmrinit( void ){
   
   // 3. Setting bits 4-6 to 000 - 111 depending on wished pre-scale
   T2CONSET = 0x0030; // 1:8
-                     // 10 000 000 = 10 MHz
-                     // period = PR2 * N * 12.5 ns = 10000 * 4 * 12.5 * 10^-9
-                     // 0.001 = 10^-3 = 1 ms = 1000 µs
-                     // f = 1/1000 µs = 1 kHz
-
-                     // 12.5 ns pga klockhastigheten, men stämmer det?
-                     // PR2 egentligen 2000 - 1 ?
-
+                    
   TMR2 = 0x0; // Clear timer register
   
   // Loading the period register with the desired 16-bit match value.
-  PR2 = 10000; // Period = PR2 (Kanske skriva 1999?)
-
-  // Start the timer
-  T2CONSET = 0x8000; 
+  // (see calculation at top)
+  // This is the period register mainly used for pitch
+  PR2 = 10000;
 
 
   /* -- Second timer initialization --*/
@@ -181,16 +199,22 @@ void tmrinit( void ){
   // Clear timer register
   TMR3 = 0x0; 
 
+  // Load period register with desired 16-bit match value (Set period)
+  // 10 ms with 1:256 pre-scale
+  // This is the period register for the LFO
+  PR3 = 3125; 
+
+
+  /* -- Interrupt flag enable -- */
+  
   // Index 12 in family data sheet p. 51
   IFSCLR(0) = 0x00001000; // Clear the timer interrupt status flag
   IECSET(0) = 0x00001000; // Enable timer interrupts 
 
-  // Load period register with desired 16-bit match value (Set period)
-  PR3 = 3125; // One second with 1:256 pre-scale
 
-  // Start the timer
+  // Start the timers
+  T2CONSET = 0x8000; 
   T3CONSET = 0x8000; 
-
 }
 
 void ocinit ( void ){
@@ -198,19 +222,17 @@ void ocinit ( void ){
   OC1CON = 0x0000;  // Turn off OC1 while doing setup 
   OC1R = PR2 / 2;   // Initialize primary Compare register
   OC1RS = PR2 / 2;  // Initialize secondary Compare register
-  // The dutycycle is half of the timers period
+                    // The dutycycle is initially half of the timers period
   
   // OCM<2:0> = 110 -> PWM mode on OC1; Fault pin disabled
-  // OCTSEL = 0 -> Timer 2
+  // OCTSEL<3> = 0 -> Timer 2
   // First four bits = 0110
   OC1CONSET = 0x06;
 
   OC1CONSET = 0x8000; // Turn OC1 on
 }
 
-
-
-void adcinit (void){
+void adcinit ( void ){
   AD1PCFGCLR = (1 << 2); // AN2 som egentligen är A0
   AD1CSSLCLR = 0xFF; // Clearar för säkerhets skull
   AD1CSSLSET = (1 << 2); // Sätter AN2(A0) till analog
@@ -244,81 +266,71 @@ void labinit( void ){
 }
 
 
-void periodcalc ( int freq ){
-  PR2 = (int) 1/(freq * 8 * 12.5 * e9);
+void periodcalc ( float freq ){
+  PR2 = 1/(freq * 8 * 12.5 * e9);
 }
 
 // Returns current frequency
 int freqcalc (){
-  /*int freq = 1/(PR2 * 8 * 12.5 * e9);
-  freq = freq / 1;*/
   return (int) 1/(PR2 * 8 * 12.5 * e9);
+  // f = 1/T
+  // PR2 is the amount of clockcycles/period
+  // Multiplying this with the prescale and the amount of time 
+  // for one clockcycle in the pic32 processor results in the periodtime
+  // 1 divided by this time results in the frequency. 
 }
 
-// if freq-20 < [0] && if freq+20 > [0]
 
-void visuals ( void ){
-  frequency = freqcalc();
-  // The length is 7
+void sharp ( short note , char notes[]){
+  chosennote[1] = ' ';
+  chosennote[0] = notes[note];
+  if(notes[note] < 0x61) // 'a'
+    chosennote[1] = '#';
+} 
 
-  // Approximating natural logarithm with taylor series
-  double x1 = (frequency/D0 - 1);
-  double x2 = (twelthroot2-1);
-
-  int N = (x1 - (x1*x1) / 2) / (x2 - (x2*x2)/2);
-
-  *debugN = N + '0';
-  *chosennote = note[N % 12];
-   
-
-
-
-  /*int i = 0;
-  for(i = 0; i < 7; i++){
-    if(frequency % notefreq[i] == 0 || frequency % notefreq[i] - 1 == 0 || frequency % notefreq[i] + 1 == 0){
-      *chosennote = note[i];
-    }
-    else{
-      *chosennote = 'x';
-    }
-  }*/
-}
-
-void arpchord( short first, short second, short third){
-  //First chord:
-  // A = 440
-  // C# = 554(.37)
-  // E = 659(.25)
-  // static int notechoice = 0;
-
-
-  //Delay
+void arpchord( float first,  float second, float third, char notes[]){
   if(IFS(0) & 0x1000){
     IFSCLR(0) = 0x1000;
     arpdelay++;
   }
 
-  if(arpdelay < 10)
+  // First note in the arpeggio
+  if(arpdelay < 10){
     periodcalc(first);
+    sharp(0, notes);
+  }
   
-  else if(arpdelay < 20)
+  else if(arpdelay < 20){
     periodcalc(second);
-  
-  else if(arpdelay < 30)
+    sharp(1, notes);
+  }
+
+  else if(arpdelay < 30){
     periodcalc(third);
+    sharp(2, notes);
+  }
 
   if(arpdelay >= 30)
     arpdelay = 0;
 }
 
-// LFO (Low-frequency-oscillator represented in a triangle-shape)
+
+
+// LFO with triangle shape
 void triangleLFO ( void ){
+  static short triangleLFO;
+  static int direction;
+
+  wavetype[0] = 0x2f;
+  wavetype[1] = 0x5c;
+
+  
   if(IFS(0) & 0x1000){
     IFSCLR(0) = 0x1000;
-    LFOcounter++;
+    triangleLFO++;
   }
 
-  if(LFOcounter == 3){
+  if(triangleLFO == 3){
     if(direction){ 
     // Positive direction  
       if(DUTYCYCLE < 0.9) 
@@ -337,25 +349,29 @@ void triangleLFO ( void ){
         direction = 1;
       }
     }
-    LFOcounter = 0;
-  }
-  else if(LFOcounter > 3){
-    DUTYCYCLE = 0.5;
-    LFOcounter = 0;
+    triangleLFO = 0;
   }
 }
 
+
+// LFO with sine shape
 void sineLFO ( void ){
+  static short sineLFO;
+
+  wavetype[0] = '~';
+  wavetype[1] = '~';
+
+  // Interrupt flag for timer 3
   if(IFS(0) & 0x1000){
     IFSCLR(0) = 0x1000;
-    LFOcounter++;
+    sineLFO++;
   }
 
-  if(LFOcounter >= 631){
-    LFOcounter = 0;
+  if(sineLFO >= 631){
+    sineLFO = 0;
   }
 
-  DUTYCYCLE = sines[LFOcounter];
+  DUTYCYCLE = sines[sineLFO];
 }
 
 void time4synth( void ){
@@ -368,11 +384,18 @@ void time4synth( void ){
   static short oldButton = 1; 
   static short LFOType = 1;
 
+  // Clear PORTEs first bit, and copy bit from PORTD onto this.
   PORTE = (PORTE & 0xf00) | (PORTD & 0x01) * 255;
-  // Clear PORTEs first bit, and copy bit from PORTD onto this. 
 
+  // Always change dutycycle when time4synth is called
+  // Dutycycle is not varied in default synth mode
+  // but in LFO-mode it is, and therefore changing
+  // the character of the sound regularly.
+  // See abstract for visualisation of LFO
+
+  // OC1RS = Register for changing dutycycle (i.e dutycycle)
   OC1RS = PR2 * DUTYCYCLE;
-  // PR2 = ADC1BUF0 * 64; // Tar bort här för att inte alltid ändra pitch (arpfallet)
+  
   
 
   // Change the period, i.e frequency, i.e pitch
@@ -381,14 +404,19 @@ void time4synth( void ){
   // PR2 can be incremented in steps of 64 (65 535/1023 ~= 64)
 
 
+  // SW4 - Default synth mode
   if(getswitches & 0x08){
-    PR2 = ADC1BUF0 * 64;
-    DUTYCYCLE = 0.75; // 75%
+    PR2 = ADC1BUF0 * 64; // Pitchändring
+    DUTYCYCLE = 0.50; // 50%
   }
 
   // SW3 - LFO mode
   if(getswitches & 0x04){
-    PR2 = ADC1BUF0 * 64; // Pitchändring
+    chosennote[0] = ' ';
+    chosennote[1] = ' ';
+
+    // Pitchändring
+    PR2 = ADC1BUF0 * 64; 
     // Triangle dutycycle LFO - BTN 4
     newbutton = (getbutton >> 2) & 0x01;
     // Toggles the button
@@ -401,9 +429,6 @@ void time4synth( void ){
       }
     }
 
-  /*  *note = (char) LFOType + '0'; 
-    display_string( 3, note );*/
-
     if(LFOType){
       triangleLFO();
     }
@@ -413,51 +438,96 @@ void time4synth( void ){
     oldButton = newbutton;
   }
 
-  // SW2 - Arpeggiator mode
+                            /* -- SW2 - Arpeggiator mode -- */
 
   if(getswitches & 0x02){
+    // Multiple for changing octaves 
+    double m = 1;
     // Här används PR3 som hastighet för arpeggiatorn
     // Potentiometern kontrollerar hastigheten av arpeggiatorn
     // genom att ändra perioden (PR3) istället för pitchen
-    PR3 = ADC1BUF0 * 6.4; 
-    arpchord(440, 554, 659);
+
+    // PR3, i.e Timer 3 is instead 
+    
+
+    if(getswitches & 0x01){
+      PR3 = ADC1BUF0 * 6.4; 
+      m = 1;
+    }
+    else{ m = ADC1BUF0/1023 + 0.01;}
+    
+
+    // BTN4 - 
+    if(getbutton & 0x04){
+      arpchord(m*659/2, m*440/2, m*370/2, "Fae");
+      // F#m7 - E, A, F#
+    }
+
+    //BTN3 - 
+    else if(getbutton & 0x02){
+      arpchord(m*880, m*1109/2, m*880/2, "aCa");
+      // A - A, C#, A
+    }
+
+    //BTN2 -
+    else if(getbutton & 0x01){
+      arpchord(m*1480/2, m*988/2, m*784/2, "CeF");
+      // Gmaj7 - F#, B, G
+    }
+
+    // Default chord
+    else{
+      arpchord(m*587/2, m*392/2, m*329/2, "egd");
+      // Em7 - D, G, E
+    }
+
+
   }
 
-  if(getswitches & 0x01){
+  /*if(getswitches & 0x01){
     DUTYCYCLE = 0.1;
-  }
+  }*/
 }
 
 void labwork( void ) {
-  visuals();
+  frequency = freqcalc();
 
   // 262
   // 262 / 100 = 2
   // (262%100) / 10 = 6
   // (262%10) = 2
+  if(frequency < 1000){
+    frequencychar[0] = frequency / 100 + '0';
+    frequencychar[1] = (frequency % 100) / 10 + '0';
+    frequencychar[2] = frequency % 10 + '0';
+  }
+  else if(frequency < 8000){
+    frequencychar[0] = frequency / 1000 + '0';
+    frequencychar[1] = ' ';
+    frequencychar[2] = 'k';
+  }
+  else{
+    frequencychar[0] = 'O';
+    frequencychar[1] = 'u';
+    frequencychar[2] = 'c';
+    frequencychar[3] = 'h';
+  }
 
-  frequencychar[0] = frequency / 100 + '0';
-  frequencychar[1] = (frequency % 100) / 10 + '0';
-  frequencychar[2] = frequency % 10 + '0';
 
   display_update();
-  display_string( 3, frequencychar );
+  
+  display_string( 1, wavetype );
   display_string( 2, chosennote );
-  display_string( 1, chosennote );
-  display_string(0, debugN);
+  display_string( 3, frequencychar );
 
-  // display_string( 2, LFOarray );
-  // timeoutcount = 0;
-  // thenewOGsoundofkista();
+  // Tilde - 0x7f ~
+  // Vänster \ - 0x5c
+  // höger / - 0x2f 
+
   time4synth();
   
 }
 
-
-
-
-
-// Sine approxes
 
 
 void thenewOGsoundofkista( void ){
@@ -472,8 +542,17 @@ void thenewOGsoundofkista( void ){
 
 
 
+void user_isr( void ){
+  return;
+}
+
+
+
 
 //grejvyard
+
+// short notefreq[] = {262, 294, 330, 349, 392, 440, 494};
+
 
 /*if(arpdelay == 100){
     if(notechoice == 3)
