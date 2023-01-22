@@ -2,13 +2,9 @@
 
 /* mipslabwork.c
 
-   This file written 2015 by F Lundevall
-   Updated 2017-04-21 by F Lundevall
-
    Björn Formgren
    Axel Lystam
 
-   This file was modified 2017-04-31 by Ture Teknolog 
    This file was modified 2022-03-3 by Axel Lystam and Björn Formgren
 
    For copyright and licensing, see file COPYING */
